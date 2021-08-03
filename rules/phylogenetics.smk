@@ -63,7 +63,7 @@ rule iqtree:
     output:
         HA_tree = "04_phylogenetics/HA-sequences.treefile"
     params:
-        model = "GTR"
+        model = "GTR+G"
     threads: 8
     shell:
         """
