@@ -140,10 +140,13 @@ rule draw_ggtree:
         HA_tree = "04_phylogenetics/HA-sequences.treefile",
         tree_metadata = "04_phylogenetics/HA-sequences.metadata.txt"
     output:
-        HA_tree_png = "04_phylogenetics/HA-sequences.tree.pdf"
+        HA_tree_png = "04_phylogenetics/HA-sequences.tree.png"
     shell:
         """
-        Rscript {config[program_dir]}/phylogenetics/scripts/draw_ggtree.R
+        Rscript {config[program_dir]}/phylogenetics/scripts/draw_ggtree.R \
+            --tree {input.HA_tree} \
+            --metadata {input.tree_metadata} \
+            --output {output.HA_tree_png}
         """
         
         

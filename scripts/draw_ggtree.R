@@ -7,11 +7,31 @@ library(ape)
 library(ggplot2)
 library(phangorn)
 
-# the below files are specified as inputs in the snakemake rule
-# if we do it this way, need to ensure filenames exactly match
+library("optparse")
 
-tree = read.tree("04_phylogenetics/HA-sequences.treefile")
-metadata = read.table("04_phylogenetics/HA-sequences.metadata.txt")
+# use optparse to grab command line arguments for the tree
+
+option_list <- list(
+  # required args
+  make_option(c("--tree"), type="character", default=NULL,
+              help="tree file in newick format", metavar="character"),
+  make_option(c("--metadata"), type="character", default=NULL,
+              help="metadata information for tree tips", metavar="character"),
+  make_option(c("--output"), type="character", default=NULL,
+              help="name for the rendered output tree file", metavar="character")
+)
+
+
+opt_parser <- OptionParser(option_list=option_list)
+opt <- parse_args(opt_parser)
+
+#print(opt$tree)
+#print(opt$metadata)
+
+# now read data for plotting the tree
+
+tree = read.tree(opt$tree)
+metadata = read.table(opt$metadata)
 
 colnames(metadata) <- c("Sample", "Source")
 
@@ -37,4 +57,4 @@ p <- ggtree(mid_root) %<+% metadata +
   xlim(values=c(0, 1.0))
 
 # use ggsave for the plot - required as an output in snakemake
-ggsave("04_phylogenetics/HA-sequences.tree.pdf", width=10, height=10, limits=F)
+ggsave(opt$output, width=10, height=10, limits=F)
