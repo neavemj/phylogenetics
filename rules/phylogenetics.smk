@@ -11,11 +11,12 @@ import os, sys
 
 HA_types = ["H5", "H7"]
 
+# TODO: what happens with more than one sample?
+# TODO: what happens if the samples are different subtypes?
 
-rule tmp_all:
+rule tree_all:
     input:
         expand("04_phylogenetics/{sample}.tree_finished.txt", sample=config["samples"])
-
 
 
 # made the IRMA assembly rule a checkpoint
