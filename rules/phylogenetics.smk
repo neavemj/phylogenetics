@@ -12,14 +12,20 @@ import os, sys
 HA_types = ["H5", "H7"]
 
 
+rule tmp_all:
+    input:
+        expand("04_phylogenetics/{sample}.tree_finished.txt", sample=config["samples"])
+
+
+
 # made the IRMA assembly rule a checkpoint
 # because we don't know what subtype will be assembled
 def determine_tree(wildcards):
     # need a rule to return either a tree file (for subtypes which we have backbone sets)
     # or return a file stating that no tree will be drawn
-    # the below ensures that irma_scan becomes and dependancy and is executed
+    # the below ensures that irma_scan becomes a dependancy and is executed
     checkpoint_output = checkpoints.irma_scan.get(**wildcards).output[0]
-    print(checkpoint_output)
+
     # now we can glob the files containing HA genes that IRMA produced
     file_names = expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta", sample=wildcards.sample,
                   subtype=glob_wildcards("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta").subtype)
@@ -52,15 +58,9 @@ rule aggregate:
     input:
         determine_tree
     output:
-        "{sample}.finished.txt"
+        "04_phylogenetics/{sample}.tree_finished.txt"
     shell:
         "ls {input} > {output}"
-
-
-rule tmp_all:
-    input:
-        expand("{sample}.finished.txt", sample=config["samples"])
-
 
 
 rule create_no_tree_file:
