@@ -9,7 +9,64 @@ The outputs are:
 
 import os, sys
 
-configfile: "config.yaml"
+HA_types = ["H5", "H7"]
+
+
+# made the IRMA assembly rule a checkpoint
+# because we don't know what subtype will be assembled
+def determine_tree(wildcards):
+    # need a rule to return either a tree file (for subtypes which we have backbone sets)
+    # or return a file stating that no tree will be drawn
+    # the below ensures that irma_scan becomes and dependancy and is executed
+    checkpoint_output = checkpoints.irma_scan.get(**wildcards).output[0]
+    print(checkpoint_output)
+    # now we can glob the files containing HA genes that IRMA produced
+    file_names = expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta", sample=wildcards.sample,
+                  subtype=glob_wildcards("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta").subtype)
+    
+    # get subtype as a string from the files produced
+    # this relies entirely on IRMA outputting file names in the format: A_HA_H5.fasta
+    # note: this determines subtype based on the first file name in the list
+    # if other subtypes are assembled, would probably cause issues
+    subtype = os.path.basename(file_names[0]).split("_")[2].rstrip(".fasta")
+    
+    # if we have a backbone for the particular subtype detected, then
+    # return a tree png file - this makes the tree rules run
+    if any(HA_type in subtype for HA_type in HA_types):        
+        return "04_phylogenetics/{}_sequences.tree.png".format(subtype)       
+    # or else, produce an empty file and the tree rules won't run
+    else:
+        return "04_phylogenetics/no_tree_for_this_subtype"
+
+
+def aggregate_input(wildcards):
+    # also need a function to just return the full IRMA HA file names
+    # this is used as input to the tree building rules below
+    return expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta", sample=config["samples"],
+                  subtype=glob_wildcards("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta").subtype)
+                  
+
+# need an aggregate rule, which determines which tree to build
+# based on the return of the determine_tree function above
+rule aggregate:
+    input:
+        determine_tree
+    output:
+        "{sample}.finished.txt"
+    shell:
+        "ls {input} > {output}"
+
+
+rule tmp_all:
+    input:
+        expand("{sample}.finished.txt", sample=config["samples"])
+
+
+
+rule create_no_tree_file:
+    output: "04_phylogenetics/no_tree_for_this_subtype"
+    shell: "touch {output}"
+
 
 rule tidy_fasta_names:
     message:
@@ -19,9 +76,9 @@ rule tidy_fasta_names:
         IQ-Tree doesn't like unusual characters
         """
     input:
-        backbone = "../introduction/raw_data/H7_NCBI_backbone.fasta",
+        backbone = config["program_dir"] + "introduction/raw_data/NCBI_{subtype}_backbone.fasta"
     output:
-        backbone_clean = "04_phylogenetics/H7_NCBI_backbone.clean.fasta"
+        backbone_clean = "04_phylogenetics/NCBI_{subtype}_backbone.clean.fasta"
     shell:
         """
         # use sed to replace brackets with underscores
@@ -32,10 +89,13 @@ rule tidy_fasta_names:
         sed "s/)$//g" {input.backbone} | \
             sed "s/)/_/g" | \
             sed "s/(/_/g" | \
-            sed "s/ /_/g" \
+            sed "s/ /_/g" | \
+            sed "s/:/_/g" | \
+            sed "s/#//g" \
             > {output.backbone_clean}
         """ 
-       
+
+
 rule combine_sample_backbone:
     message:
         """
@@ -44,10 +104,13 @@ rule combine_sample_backbone:
         for phylogenetic analysis
         """
     input:
-        HA = "../introduction/raw_data/21-02023-03_H7.fasta",
-        backbone_clean = "04_phylogenetics/H7_NCBI_backbone.clean.fasta"
+        dummy_file = expand("02_irma_assembly/{sample}/IRMA_COMPLETE", sample=config["samples"]),
+        # the aggregate input function will return files produced by IRMA
+        # could be any subtype
+        HA = aggregate_input,
+        backbone_clean = "04_phylogenetics/NCBI_{subtype}_backbone.clean.fasta"
     output:
-        HA_sequences = "04_phylogenetics/HA-sequences.fasta"
+        HA_sequences = "04_phylogenetics/{subtype}_sequences.fasta"
     shell:
         """
         cat \
@@ -64,10 +127,10 @@ rule grab_metadata:
         Compiling simple metadata for IQ-Tree
         """
     input:
-        HA = "../introduction/raw_data/21-02023-03_H7.fasta",
-        backbone_clean = "04_phylogenetics/H7_NCBI_backbone.clean.fasta"
+        HA = aggregate_input,        
+        backbone_clean = "04_phylogenetics/NCBI_{subtype}_backbone.clean.fasta"      
     output:
-        tree_metadata = "04_phylogenetics/HA-sequences.metadata.txt"
+        tree_metadata = "04_phylogenetics/{subtype}_sequences.metadata.txt"
     shell:
         """
         # want to get the headers from both files and in the second column
@@ -91,9 +154,9 @@ rule mafft_align:
         Aligning combined sequences using MAFFT
         """
     input:
-        HA_sequences = "04_phylogenetics/HA-sequences.fasta"
+        HA_sequences = "04_phylogenetics/{subtype}_sequences.fasta"
     output:
-        HA_alignment = "04_phylogenetics/HA-sequences.align.fasta"
+        HA_alignment = "04_phylogenetics/{subtype}_sequences.align.fasta"
     threads: 8
     shell:
         """
@@ -112,9 +175,9 @@ rule iqtree:
         Creating phylogenetic tree from aligned sequences
         """
     input:
-        HA_alignment = "04_phylogenetics/HA-sequences.align.fasta"
+        HA_alignment = "04_phylogenetics/{subtype}_sequences.align.fasta"
     output:
-        HA_tree = "04_phylogenetics/HA-sequences.treefile"
+        HA_tree = "04_phylogenetics/{subtype}_sequences.treefile"
     params:
         model = "GTR+G"
     threads: 8
@@ -127,7 +190,7 @@ rule iqtree:
             -m {params.model} \
             -s {input.HA_alignment} \
             -redo \
-            -pre "04_phylogenetics/HA-sequences"
+            -pre "04_phylogenetics/{wildcards.subtype}_sequences"
         """
         
 rule draw_ggtree:
@@ -137,10 +200,10 @@ rule draw_ggtree:
         Drawing the tree using ggtree in R
         """
     input:
-        HA_tree = "04_phylogenetics/HA-sequences.treefile",
-        tree_metadata = "04_phylogenetics/HA-sequences.metadata.txt"
+        HA_tree = "04_phylogenetics/{subtype}_sequences.treefile",
+        tree_metadata = "04_phylogenetics/{subtype}_sequences.metadata.txt"
     output:
-        HA_tree_png = "04_phylogenetics/HA-sequences.tree.png"
+        HA_tree_png = "04_phylogenetics/{subtype}_sequences.tree.png"
     shell:
         """
         Rscript {config[program_dir]}/phylogenetics/scripts/draw_ggtree.R \
@@ -149,6 +212,9 @@ rule draw_ggtree:
             --output {output.HA_tree_png}
         """
         
+
+
+
         
         
     
