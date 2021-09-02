@@ -14,21 +14,22 @@ HA_types = ["H5", "H7"]
 # TODO: what happens with more than one sample?
 # TODO: what happens if the samples are different subtypes?
 
+
 rule tree_all:
     input:
-        expand("04_phylogenetics/{sample}.tree_finished.txt", sample=config["samples"])
+        expand("04_phylogenetics/{sample}_tree_finished.txt", sample=config["samples"])
 
 
 # made the IRMA assembly rule a checkpoint
 # because we don't know what subtype will be assembled
 def determine_tree(wildcards):
-    # need a rule to return either a tree file (for subtypes which we have backbone sets)
+    # need this rule to return either a tree file (for subtypes which we have backbone sets)
     # or return a file stating that no tree will be drawn
     # the below ensures that irma_scan becomes a dependancy and is executed
     checkpoint_output = checkpoints.irma_scan.get(**wildcards).output[0]
 
     # now we can glob the files containing HA genes that IRMA produced
-    file_names = expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta", sample=wildcards.sample,
+    file_names = expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta", sample=config["samples"],
                   subtype=glob_wildcards("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta").subtype)
     
     # get subtype as a string from the files produced
@@ -41,29 +42,25 @@ def determine_tree(wildcards):
     # return a tree png file - this makes the tree rules run
     if any(HA_type in subtype for HA_type in HA_types):        
         return "04_phylogenetics/{}_sequences.tree.png".format(subtype)       
-    # or else, produce an empty file and the tree rules won't run
+    # or else produce an empty file and the tree rules won't run
     else:
         return "04_phylogenetics/no_tree_for_this_subtype"
 
 
-def aggregate_input(wildcards):
-    # also need a function to just return the full IRMA HA file names
-    # this is used as input to the tree building rules below
-    return expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta", sample=config["samples"],
-                  subtype=glob_wildcards("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta").subtype)
-                  
-
 # need an aggregate rule, which determines which tree to build
 # based on the return of the determine_tree function above
-rule aggregate:
+rule aggregate_tree:
     input:
         determine_tree
     output:
-        "04_phylogenetics/{sample}.tree_finished.txt"
+        # the sample wildcard has to be here!
+        # otherwise get that annoying 'sample wildcard not found error' in the determine_tree function
+        "04_phylogenetics/{sample}_tree_finished.txt"
     shell:
         "ls {input} > {output}"
-
-
+        
+        
+# create an empty file if no tree for that subtype
 rule create_no_tree_file:
     output: "04_phylogenetics/no_tree_for_this_subtype"
     shell: "touch {output}"
@@ -97,6 +94,35 @@ rule tidy_fasta_names:
         """ 
 
 
+rule rename_IRMA_headers:
+    input:
+        # this just makes IRMA run for each sample
+        # can't put the fasta file directly because we can't list subtype in the irma_scan rule
+        irma_complete = "02_irma_assembly/{sample}/IRMA_COMPLETE",
+    output:
+        "02_irma_assembly/{sample}/irma_output/A_HA_{subtype}_headers.fasta"
+    params:
+        # instead putting the fasta file here
+        irma_fasta = "02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta",
+    shell:
+        """          
+        # note that I'm using sed to insert the sample name into the new fasta header
+        # IRMA only names sequences using subtype - I also want the sample name in there
+        sed "s/>/>{wildcards.sample}_/g" {params.irma_fasta} \
+            > {output} 
+        """
+
+
+# in the combine_sample_backbone rule, the expand function makes too many files
+# I have two wildcards (subtype and sample) and these get expanded to 2 files per assembly
+# I only want one assembly per sample obviously, so just 'uniqing' that list here
+def merge_assembly_files(wildcards):
+    sample_files = expand("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}_headers.fasta", sample=config["samples"],
+                  subtype=glob_wildcards("02_irma_assembly/{sample}/irma_output/A_HA_{subtype}.fasta").subtype)
+    print("sample files before uniquing are:", sample_files)
+    return list(set(sample_files))
+
+
 rule combine_sample_backbone:
     message:
         """
@@ -105,15 +131,19 @@ rule combine_sample_backbone:
         for phylogenetic analysis
         """
     input:
-        dummy_file = expand("02_irma_assembly/{sample}/IRMA_COMPLETE", sample=config["samples"]),
+        #dummy_file = expand("02_irma_assembly/{sample}/IRMA_COMPLETE", sample=config["samples"]),
         # the aggregate input function will return files produced by IRMA
         # could be any subtype
-        HA = aggregate_input,
+        HA = merge_assembly_files,
         backbone_clean = "04_phylogenetics/NCBI_{subtype}_backbone.clean.fasta"
+        
     output:
-        HA_sequences = "04_phylogenetics/{subtype}_sequences.fasta"
+        HA_sequences = "04_phylogenetics/{subtype}_sequences.fasta",
     shell:
         """
+        # this command cats together the new sequences plus the appropriate backbone
+        # note that I'm using sed to insert the sample name into the new fasta header
+        # IRMA only names sequences using subtype - I also want the sample name in there
         cat \
             {input.HA} \
             {input.backbone_clean} \
@@ -128,7 +158,7 @@ rule grab_metadata:
         Compiling simple metadata for IQ-Tree
         """
     input:
-        HA = aggregate_input,        
+        HA = merge_assembly_files,       
         backbone_clean = "04_phylogenetics/NCBI_{subtype}_backbone.clean.fasta"      
     output:
         tree_metadata = "04_phylogenetics/{subtype}_sequences.metadata.txt"
@@ -169,6 +199,7 @@ rule mafft_align:
             > {output.HA_alignment}
         """
 
+
 rule iqtree:
     message:
         """
@@ -193,6 +224,7 @@ rule iqtree:
             -redo \
             -pre "04_phylogenetics/{wildcards.subtype}_sequences"
         """
+        
         
 rule draw_ggtree:
     message:
