@@ -5,6 +5,7 @@
 library(ggtree)
 library(ape)
 library(ggplot2)
+library(Rcpp)
 library(phangorn)
 
 library("optparse")
