@@ -15,9 +15,9 @@ HA_types = ["H5", "H7"]
 # TODO: what happens if the samples are different subtypes?
 
 
-rule tree_all:
-    input:
-        expand("04_phylogenetics/{sample}_tree_finished.txt", sample=config["samples"])
+#rule tree_all:
+#    input:
+#        expand("04_phylogenetics/{sample}_tree_finished.txt", sample=config["samples"])
 
 
 # made the IRMA assembly rule a checkpoint
